@@ -19,10 +19,10 @@ import (
 )
 
 func main() {
-	location := "AUS-QLD"
-	if tmp := os.Getenv("LOCATION"); tmp != "" {
+	location := os.Getenv("LOCATION")
+	if location == "" {
 		log.Println("set env var LOCATION=AUS-QLD to change the location")
-		location = tmp
+		location = "AUS-QLD"
 	}
 
 	info, err := cpu.Info()
