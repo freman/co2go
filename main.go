@@ -2,28 +2,39 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
-)
 
-const (
-	gramsOfco2perkwh = 64 // Average in France
-	cpuThreads       = 54
-	cpuTdp           = 205 // in watts
-
+	"github.com/shirou/gopsutil/cpu"
 )
 
 func main() {
-	wattPerThread := float64(cpuTdp) / cpuThreads                                                 // 3.79
-	kiloWattHourPerThread := wattPerThread / 1000                                                 // 0.00379
-	gramsOfCo2PerHourPerThread := kiloWattHourPerThread * gramsOfco2perkwh                        // 0.24
-	gramsOfCo2PerThreadPerNS := gramsOfCo2PerHourPerThread / float64(time.Second/time.Nanosecond) // 0.00000000024296296296
+	location := "AUS-QLD"
+	if tmp := os.Getenv("LOCATION"); tmp != "" {
+		log.Println("set env var LOCATION=AUS-QLD to change the location")
+		location = tmp
+	}
+
+	info, err := cpu.Info()
+	if err != nil {
+		log.Println(err)
+		log.Fatal("unable to find cpu info")
+	}
+
+	wattPerThread := cpuTDP(info[0].ModelName) / float64(runtime.NumCPU())
+	kiloWattHourPerThread := wattPerThread / 1000
+	gramsOfCo2PerHourPerThread := kiloWattHourPerThread * carbonIntensity(location)
+	gramsOfCo2PerThreadPerNS := gramsOfCo2PerHourPerThread / float64(time.Second/time.Nanosecond)
 
 	c := exec.Command("go", os.Args[1:]...)
 	stdOut, err := c.StdoutPipe()
@@ -76,4 +87,40 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func carbonIntensity(location string) float64 {
+	return loadFromData("co2.json", location)
+}
+
+func cpuTDP(model string) float64 {
+	return loadFromData("tdp.json", model)
+}
+
+func loadFromData(filename, lookup string) float64 {
+	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		log.Println(err)
+		log.Fatal("Can't locate files")
+	}
+
+	f, err := os.Open(filepath.Join(dir, filename))
+	if err != nil {
+		log.Println(err)
+		log.Fatalf("Unable to read %s", filename)
+	}
+	defer f.Close()
+
+	dataMap := map[string]float64{}
+	if err := json.NewDecoder(f).Decode(&dataMap); err != nil {
+		log.Println(err)
+		log.Fatalf("unable to parse %s", filename)
+	}
+
+	value, found := dataMap[lookup]
+	if !found {
+		log.Fatalf("No info for %s", lookup)
+	}
+
+	return value
 }
